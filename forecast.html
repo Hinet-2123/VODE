@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Прогноз качества воздуха</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <!-- Библиотека для графиков -->
+  <style>
+    /* Добавьте стили для страницы, например, для графиков и кнопок */
+    #forecast-graph {
+      width: 80%;
+      margin: auto;
+      padding-top: 20px;
+    }
+    button {
+      padding: 10px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Прогноз качества воздуха</h1>
+
+  <!-- Ввод города с автозаполнением -->
+  <div>
+    <input type="text" id="city" placeholder="Введите город" autocomplete="off" oninput="getCitySuggestions()" />
+    <div id="autocomplete-list" class="autocomplete-suggestions"></div>
+  </div>
+
+  <button onclick="getAirQualityForecast()">Показать прогноз качества воздуха</button>
+
+  <!-- Интервал времени (например, 3-5 дней) -->
+  <div>
+    <label for="forecast-days">Выберите количество дней:</label>
+    <select id="forecast-days">
+      <option value="3">3 дня</option>
+      <option value="5">5 дней</option>
+      <option value="7">7 дней</option>
+    </select>
+  </div>
+
+  <!-- График прогноза -->
+  <div id="forecast-graph">
+    <canvas id="forecastChart"></canvas>
+  </div>
+
+  <!-- Навигация -->
+  <a href="index.html">Назад на главную</a>
+
+  <script>
+    const openWeatherApiKey = '43701e1cd87ea3324e38f4844201c432';  // Ваш API-ключ для OpenWeather
+    let cityLat = 55.7558;  // Начальная широта (Москва)
+    let cityLon = 37.6173;  // Начальная долгота (Москва)
+    let city = '';  // Переменная для хранения города
+
+    let forecastChart;  // График
+
+    // Извлекаем город из URL-параметров
+    const urlParams = new URLSearchParams(window.location.search);
+    city = urlParams.get('city');
+
+    // Если город найден, отображаем его в поле ввода
+    if (city) {
+      document.getElementById('city').value = city;
+      getCoordinates(city); // Запрашиваем координаты для этого города
+    }
+
+    // Функция для получения координат города
+    function getCoordinates(city) {
+      fetch(`https://nominatim.openstreetmap.org/search?q=${city}&format=json&addressdetails=1&limit=1&lang=ru`)
+        .then(response => response.json())
+        .then(data => {
+          if (data.length > 0) {
+            cityLat = data[0].lat;
+            cityLon = data[0].lon;
+          }
+        })
+        .catch(error => console.error("Ошибка получения координат города:", error));
+    }
+
+    // Функция для получения прогноза качества воздуха
+    function getAirQualityForecast() {
+      const forecastDays = document.getElementById('forecast-days').value;
+
+      fetch(`https://api.openweathermap.org/data/2.5/air_pollution/forecast?lat=${cityLat}&lon=${cityLon}&appid=${openWeatherApiKey}&cnt=${forecastDays}`)
+        .then(response => response.json())
+        .then(data => {
+          console.log("Прогноз загрязнения воздуха:", data);
+          updateForecastGraph(data);
+        })
+        .catch(error => console.error("Ошибка получения прогноза качества воздуха:", error));
+    }
+
+    // Функция для обновления графика с прогнозом загрязнения
+    function updateForecastGraph(data) {
+      // Если график существует, удаляем его
+      if (forecastChart) {
+        forecastChart.destroy();
+      }
+
+      // Подготовка данных для графика
+      const labels = data.list.map(item => new Date(item.dt * 1000).toLocaleDateString());
+      const pm25Data = data.list.map(item => item.components.pm2_5);
+      const pm10Data = data.list.map(item => item.components.pm10);
+      const coData = data.list.map(item => item.components.co);
+      const noData = data.list.map(item => item.components.no);
+      const no2Data = data.list.map(item => item.components.no2);
+      const o3Data = data.list.map(item => item.components.o3);
+      const so2Data = data.list.map(item => item.components.so2);
+
+      // Создание нового графика
+      const ctx = document.getElementById('forecastChart').getContext('2d');
+      forecastChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'PM2.5',
+              data: pm25Data,
+              borderColor: 'rgba(255, 99, 132, 1)',
+              fill: false,
+            },
+            {
+              label: 'PM10',
+              data: pm10Data,
+              borderColor: 'rgba(54, 162, 235, 1)',
+              fill: false,
+            },
+            {
+              label: 'CO',
+              data: coData,
+              borderColor: 'rgba(75, 192, 192, 1)',
+              fill: false,
+            },
+            {
+              label: 'NO',
+              data: noData,
+              borderColor: 'rgba(153, 102, 255, 1)',
+              fill: false,
+            },
+            {
+              label: 'NO2',
+              data: no2Data,
+              borderColor: 'rgba(255, 159, 64, 1)',
+              fill: false,
+            },
+            {
+              label: 'O3',
+              data: o3Data,
+              borderColor: 'rgba(255, 205, 86, 1)',
+              fill: false,
+            },
+            {
+              label: 'SO2',
+              data: so2Data,
+              borderColor: 'rgba(153, 159, 255, 1)',
+              fill: false,
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            y: {
+              type: 'logarithmic', // Логарифмическая шкала на оси Y
+              ticks: {
+                callback: function(value, index, values) {
+                  return value.toFixed(1); // Форматируем значения на оси Y
+                }
+              }
+            },
+            x: {
+              beginAtZero: true
+            }
+          }
+        }
+      });
+    }
+  </script>
+
+</body>
+</html>

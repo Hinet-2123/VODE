@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Исторические данные о загрязнении</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <!-- Библиотека для графиков -->
+  <style>
+    #historical-graph {
+      width: 80%;
+      margin: auto;
+      padding-top: 20px;
+    }
+    table {
+      width: 80%;
+      margin: 20px auto;
+      border-collapse: collapse;
+    }
+    table, th, td {
+      border: 1px solid black;
+    }
+    th, td {
+      padding: 8px;
+      text-align: center;
+    }
+    button {
+      padding: 10px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Исторические данные о загрязнении воздуха</h1>
+
+  <!-- Ввод города с автозаполнением -->
+  <div>
+   <!-- Навигация -->
+  <a href="index.html">Назад на главную</a>
+  <div>
+    <input type="text" id="city" placeholder="Введите город" autocomplete="off" oninput="getCitySuggestions()">
+    <div id="autocomplete-list" class="autocomplete-suggestions"></div>
+  </div>
+
+  <button onclick="getHistoricalData()">Показать исторические данные</button>
+
+  <!-- Интервал времени (например, 7 дней, 30 дней) -->
+  <div>
+    <label for="historical-days">Выберите период:</label>
+    <select id="historical-days">
+      <option value="7">7 дней</option>
+      <option value="30">30 дней</option>
+      <option value="90">90 дней</option>
+    </select>
+  </div>
+
+  <!-- График исторических данных -->
+  <div id="historical-graph">
+    <canvas id="historicalChart"></canvas>
+  </div>
+
+  <!-- Таблица с историческими данными -->
+  <div id="historical-table">
+    <table id="data-table">
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th>PM2.5</th>
+          <th>PM10</th>
+          <th>CO</th>
+          <th>NO2</th>
+          <th>SO2</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- Здесь будут отображаться строки таблицы -->
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    const openWeatherApiKey = '43701e1cd87ea3324e38f4844201c432';  // Ваш API-ключ для OpenWeather
+    let cityLat = 55.7558;  // Начальная широта (Москва)
+    let cityLon = 37.6173;  // Начальная долгота (Москва)
+
+    let historicalChart;  // График
+
+    // Функция для получения предложений по городу
+    function getCitySuggestions() {
+      const cityInput = document.getElementById('city').value;
+      if (cityInput.length < 3) {
+        document.getElementById('autocomplete-list').innerHTML = '';
+        return;
+      }
+
+      // Запрос к OpenStreetMap Nominatim API для поиска города
+      fetch(`https://nominatim.openstreetmap.org/search?q=${cityInput}&format=json&addressdetails=1&limit=5&lang=ru`)
+        .then(response => response.json())
+        .then(data => {
+          let suggestionsHTML = '';
+          data.forEach(item => {
+            suggestionsHTML += `<div class="autocomplete-suggestion" onclick="selectCity('${item.display_name}', ${item.lat}, ${item.lon})">${item.display_name}</div>`;
+          });
+          document.getElementById('autocomplete-list').innerHTML = suggestionsHTML;
+        });
+    }
+
+    // Функция для выбора города
+    function selectCity(name, lat, lon) {
+      document.getElementById('city').value = name;
+      cityLat = lat;
+      cityLon = lon;
+    }
+
+    // Функция для получения исторических данных о загрязнении
+    function getHistoricalData() {
+      const historicalDays = document.getElementById('historical-days').value;
+
+      fetch(`https://api.openweathermap.org/data/2.5/air_pollution/history?lat=${cityLat}&lon=${cityLon}&start=1625112000&end=1625133600&appid=${openWeatherApiKey}`)
+        .then(response => response.json())
+        .then(data => {
+          console.log("Исторические данные загрязнения воздуха:", data);
+          updateHistoricalGraph(data);
+          updateHistoricalTable(data);
+        })
+        .catch(error => console.error("Ошибка получения исторических данных о загрязнении:", error));
+    }
+
+    // Функция для обновления графика с историческими данными
+    function updateHistoricalGraph(data) {
+      // Если график существует, удаляем его
+      if (historicalChart) {
+        historicalChart.destroy();
+      }
+
+      // Подготовка данных для графика
+      const labels = data.list.map(item => new Date(item.dt * 1000).toLocaleDateString());
+      const pm25Data = data.list.map(item => item.components.pm2_5);
+      const pm10Data = data.list.map(item => item.components.pm10);
+      const coData = data.list.map(item => item.components.co);
+      const no2Data = data.list.map(item => item.components.no2);
+      const so2Data = data.list.map(item => item.components.so2);
+
+      // Создание нового графика
+      const ctx = document.getElementById('historicalChart').getContext('2d');
+      historicalChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'PM2.5',
+              data: pm25Data,
+              borderColor: 'rgba(255, 99, 132, 1)',
+              fill: false,
+            },
+            {
+              label: 'PM10',
+              data: pm10Data,
+              borderColor: 'rgba(54, 162, 235, 1)',
+              fill: false,
+            },
+            {
+              label: 'CO',
+              data: coData,
+              borderColor: 'rgba(75, 192, 192, 1)',
+              fill: false,
+            },
+            {
+              label: 'NO2',
+              data: no2Data,
+              borderColor: 'rgba(153, 102, 255, 1)',
+              fill: false,
+            },
+            {
+              label: 'SO2',
+              data: so2Data,
+              borderColor: 'rgba(255, 159, 64, 1)',
+              fill: false,
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: function(value, index, values) {
+                  return value.toFixed(1); // Форматируем значения на оси Y
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // Функция для обновления таблицы с историческими данными
+    function updateHistoricalTable(data) {
+      const tableBody = document.getElementById('data-table').getElementsByTagName('tbody')[0];
+      tableBody.innerHTML = ''; // Очистить таблицу
+
+      data.list.forEach(item => {
+        const row = tableBody.insertRow();
+        const dateCell = row.insertCell(0);
+        const pm25Cell = row.insertCell(1);
+        const pm10Cell = row.insertCell(2);
+        const coCell = row.insertCell(3);
+        const no2Cell = row.insertCell(4);
+        const so2Cell = row.insertCell(5);
+
+        dateCell.textContent = new Date(item.dt * 1000).toLocaleDateString();
+        pm25Cell.textContent = item.components.pm2_5.toFixed(2);
+        pm10Cell.textContent = item.components.pm10.toFixed(2);
+        coCell.textContent = item.components.co.toFixed(2);
+        no2Cell.textContent = item.components.no2.toFixed(2);
+        so2Cell.textContent = item.components.so2.toFixed(2);
+      });
+    }
+  </script>
+
+</body>
+</html>

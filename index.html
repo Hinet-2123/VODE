@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Качество воздуха с зоной загрязнения</title>
+  <style>
+    #map {
+      width: 100%;
+      height: 500px;
+    }
+    .autocomplete-suggestions {
+      border: 1px solid #ccc;
+      max-height: 150px;
+      overflow-y: auto;
+      position: absolute;
+      z-index: 100;
+      background-color: white;
+    }
+    .autocomplete-suggestion {
+      padding: 5px;
+      cursor: pointer;
+    }
+    .autocomplete-suggestion:hover {
+      background-color: #f0f0f0;
+    }
+    #verdict {
+      margin-top: 20px;
+      font-size: 18px;
+      font-weight: bold;
+    }
+    #recommendations {
+      margin-top: 10px;
+      font-size: 16px;
+    }
+    #aqi {
+      margin-top: 20px;
+      font-size: 16px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Проверка качества воздуха с зоной загрязнения</h1>
+  
+  <!-- Ввод города с автозаполнением -->
+  <div class="inputs">
+    <input type="text" id="city" placeholder="Введите город" autocomplete="off" oninput="getCitySuggestions()">
+    <div id="autocomplete-list" class="autocomplete-suggestions"></div>
+  </div>
+  <button onclick="getAirQuality()">Показать качество воздуха</button>
+
+  <!-- Отображение данных о загрязнении -->
+  <p>PM2.5: <span id="pm25">Неизвестно</span> - <span id="pm25-quality">Неизвестно</span> <span id="pm25-description">Описание: -</span></p>
+  <p>PM10: <span id="pm10">Неизвестно</span> - <span id="pm10-quality">Неизвестно</span> <span id="pm10-description">Описание: -</span></p>
+  <p>CO: <span id="co2">Неизвестно</span> - <span id="co2-quality">Неизвестно</span> <span id="co2-description">Описание: -</span></p>
+  <p>NO: <span id="no">Неизвестно</span> - <span id="no-quality">Неизвестно</span> <span id="no-description">Описание: -</span></p>
+  <p>NO2: <span id="no2">Неизвестно</span> - <span id="no2-quality">Неизвестно</span> <span id="no2-description">Описание: -</span></p>
+  <p>O3: <span id="o3">Неизвестно</span> - <span id="o3-quality">Неизвестно</span> <span id="o3-description">Описание: -</span></p>
+  <p>SO2: <span id="so2">Неизвестно</span> - <span id="so2-quality">Неизвестно</span> <span id="so2-description">Описание: -</span></p>
+
+  <div id="map"></div>
+
+  <!-- Вердикт и рекомендации -->
+  <div id="verdict"></div>
+  <div id="recommendations"></div>
+  <div id="aqi"></div> <!-- Здесь будем отображать AQI -->
+
+  <!-- Подключаем Яндекс.Карты API с вашим ключом -->
+  <script src="https://api-maps.yandex.ru/2.1/?apikey=8c0c128a-a6d4-455a-8f1d-9d47f12ec4ac&lang=ru_RU" type="text/javascript"></script>
+
+  <script>
+    const openWeatherApiKey = '43701e1cd87ea3324e38f4844201c432';  // Ваш API-ключ для OpenWeather
+    let map;  // Переменная для карты
+    let marker = null;  // Глобальная переменная для маркера
+    let circle = null;  // Глобальная переменная для круга (области загрязнения)
+    let currentCityLat = 55.7558;  // Начальная широта (Москва)
+    let currentCityLon = 37.6173;  // Начальная долгота (Москва)
+    let citySuggestions = [];  // Глобальная переменная для хранения предложений
+
+    let debounceTimer;  // Таймер для дебаунса
+
+    // Функция для получения предложений по городу
+    function getCitySuggestions() {
+      const cityInput = document.getElementById('city').value;
+      if (cityInput.length < 3) {
+        document.getElementById('autocomplete-list').innerHTML = '';
+        return;
+      }
+
+      // Убираем старый таймер и запускаем новый
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        // Запрос к OpenStreetMap Nominatim API для поиска города
+        fetch(`https://nominatim.openstreetmap.org/search?q=${cityInput}&format=json&addressdetails=1&limit=5&countrycodes=RU&lang=ru`)
+          .then(response => response.json())
+          .then(data => {
+            citySuggestions = data.map(item => {
+              return {
+                name: item.display_name,
+                lat: item.lat,
+                lon: item.lon
+              };
+            });
+
+            // Отображаем предложения
+            let suggestionsHTML = '';
+            citySuggestions.forEach(suggestion => {
+              suggestionsHTML += `<div class="autocomplete-suggestion" onclick="selectCity('${suggestion.name}', ${suggestion.lat}, ${suggestion.lon})">${suggestion.name}</div>`;
+            });
+
+            document.getElementById('autocomplete-list').innerHTML = suggestionsHTML;
+          });
+      }, 300);  // Тайм-аут 300 мс, чтобы не запускать запросы на каждом вводе
+    }
+
+    // Функция для выбора города из списка предложений
+    function selectCity(name, lat, lon) {
+      document.getElementById('city').value = name;
+      document.getElementById('autocomplete-list').innerHTML = ''; // Скрываем список предложений
+      currentCityLat = lat;  // Обновляем координаты города
+      currentCityLon = lon;  // Обновляем координаты города
+      getAirQualityByCoordinates(lat, lon); // Запрашиваем данные о загрязнении для выбранного города
+    }
+
+    // Функция для получения данных о загрязнении
+    function getAirQuality() {
+      getAirQualityByCoordinates(currentCityLat, currentCityLon);
+    }
+
+    function getAirQualityByCoordinates(lat, lon) {
+      console.log("Запрос данных о загрязнении для координат:", lat, lon); // Логирование запроса по координатам
+
+      fetch(`https://api.openweathermap.org/data/2.5/air_pollution?lat=${lat}&lon=${lon}&appid=${openWeatherApiKey}`)
+        .then(response => response.json())
+        .then(data => {
+          const airQuality = data.list[0].components;
+          console.log("Данные о загрязнении:", airQuality);
+
+          // Отображаем данные на странице и уровень загрязнения
+          document.getElementById('pm25').textContent = airQuality.pm2_5 || 'Неизвестно';
+          document.getElementById('pm25-quality').textContent = getPollutionLevel(airQuality.pm2_5, 'pm2_5');
+          document.getElementById('pm25-description').textContent = getDescription(airQuality.pm2_5, 'pm2_5');
+
+          document.getElementById('pm10').textContent = airQuality.pm10 || 'Неизвестно';
+          document.getElementById('pm10-quality').textContent = getPollutionLevel(airQuality.pm10, 'pm10');
+          document.getElementById('pm10-description').textContent = getDescription(airQuality.pm10, 'pm10');
+
+          document.getElementById('co2').textContent = airQuality.co || 'Неизвестно';
+          document.getElementById('co2-quality').textContent = getPollutionLevel(airQuality.co, 'co');
+          document.getElementById('co2-description').textContent = getDescription(airQuality.co, 'co');
+
+          document.getElementById('no').textContent = airQuality.no || 'Неизвестно';
+          document.getElementById('no-quality').textContent = getPollutionLevel(airQuality.no, 'no');
+          document.getElementById('no-description').textContent = getDescription(airQuality.no, 'no');
+
+          document.getElementById('no2').textContent = airQuality.no2 || 'Неизвестно';
+          document.getElementById('no2-quality').textContent = getPollutionLevel(airQuality.no2, 'no2');
+          document.getElementById('no2-description').textContent = getDescription(airQuality.no2, 'no2');
+
+          document.getElementById('o3').textContent = airQuality.o3 || 'Неизвестно';
+          document.getElementById('o3-quality').textContent = getPollutionLevel(airQuality.o3, 'o3');
+          document.getElementById('o3-description').textContent = getDescription(airQuality.o3, 'o3');
+
+          document.getElementById('so2').textContent = airQuality.so2 || 'Неизвестно';
+          document.getElementById('so2-quality').textContent = getPollutionLevel(airQuality.so2, 'so2');
+          document.getElementById('so2-description').textContent = getDescription(airQuality.so2, 'so2');
+
+          // Обновление карты с новыми данными
+          updateMap(lat, lon, airQuality.pm2_5, airQuality.pm10, airQuality.co, airQuality.no, airQuality.no2, airQuality.o3, airQuality.so2);
+
+          // Выводим вердикт и рекомендации
+          updateVerdict(airQuality.pm2_5, airQuality.pm10, airQuality.co, airQuality.no, airQuality.no2, airQuality.o3, airQuality.so2);
+          
+          // Выводим индекс AQI
+          updateAQI(airQuality.pm2_5, airQuality.pm10, airQuality.co, airQuality.no, airQuality.no2, airQuality.o3, airQuality.so2);
+        })
+        .catch(error => {
+          console.error("Ошибка получения данных о загрязнении:", error);
+        });
+    }
+
+    // Функция для определения уровня загрязнения для каждого показателя
+    function getPollutionLevel(value, type) {
+      if (value === undefined) return "Неизвестно";
+
+      const levels = {
+        pm2_5: [
+          { limit: 12, level: "Хорошее качество" },
+          { limit: 35.4, level: "Умеренное загрязнение" },
+          { limit: 55.4, level: "Высокое загрязнение" },
+          { limit: 150.4, level: "Очень высокое загрязнение" }
+        ],
+        pm10: [
+          { limit: 54, level: "Хорошее качество" },
+          { limit: 154, level: "Умеренное загрязнение" },
+          { limit: 254, level: "Высокое загрязнение" },
+          { limit: 354, level: "Очень высокое загрязнение" }
+        ],
+        co: [
+          { limit: 4.4, level: "Хорошее качество" },
+          { limit: 9.4, level: "Умеренное загрязнение" },
+          { limit: 12.4, level: "Высокое загрязнение" },
+          { limit: 15.4, level: "Очень высокое загрязнение" }
+        ],
+        no: [
+          { limit: 0.5, level: "Хорошее качество" },
+          { limit: 1.2, level: "Умеренное загрязнение" },
+          { limit: 1.8, level: "Высокое загрязнение" },
+          { limit: 2.5, level: "Очень высокое загрязнение" }
+        ],
+        no2: [
+          { limit: 10, level: "Хорошее качество" },
+          { limit: 25, level: "Умеренное загрязнение" },
+          { limit: 50, level: "Высокое загрязнение" },
+          { limit: 100, level: "Очень высокое загрязнение" }
+        ],
+        o3: [
+          { limit: 50, level: "Хорошее качество" },
+          { limit: 100, level: "Умеренное загрязнение" },
+          { limit: 150, level: "Высокое загрязнение" },
+          { limit: 200, level: "Очень высокое загрязнение" }
+        ],
+        so2: [
+          { limit: 2.5, level: "Хорошее качество" },
+          { limit: 5, level: "Умеренное загрязнение" },
+          { limit: 10, level: "Высокое загрязнение" },
+          { limit: 15, level: "Очень высокое загрязнение" }
+        ]
+      };
+
+      const levelData = levels[type];
+      for (let i = 0; i < levelData.length; i++) {
+        if (value <= levelData[i].limit) {
+          return levelData[i].level;
+        }
+      }
+
+      return "Неизвестно";
+    }
+
+    // Функция для получения описания каждого загрязнителя
+    function getDescription(value, type) {
+      if (value === undefined) return "Неизвестно";
+
+      const descriptions = {
+        pm2_5: "PM2.5 - Мелкие частицы, которые проникают в легкие и могут повлиять на дыхание и здоровье в целом. Высокие уровни могут быть опасны для людей с респираторными заболеваниями.",
+        pm10: "PM10 - Частицы, которые могут проникать в дыхательные пути и вызывать различные заболевания органов дыхания, особенно при длительном воздействии.",
+        co: "CO (угарный газ) - Токсичное вещество, которое может привести к отравлению, особенно в помещениях с плохой вентиляцией.",
+        no: "NO (оксид азота) - Влияет на развитие респираторных заболеваний и может ухудшить состояние людей с астмой.",
+        no2: "NO2 (диоксид азота) - Может раздражать дыхательные пути и ухудшить состояние людей с заболеваниями легких.",
+        o3: "O3 (озон) - Высокие уровни озона могут вызвать проблемы с дыханием, особенно у людей с астмой и хроническими заболеваниями легких.",
+        so2: "SO2 (диоксид серы) - Может раздражать дыхательные пути и усугубить заболевания легких, такие как астма."
+      };
+
+      return descriptions[type] || "Нет описания";
+    }
+
+    // Функция для инициализации карты
+    ymaps.ready(init);
+    function init() {
+      map = new ymaps.Map("map", {
+        center: [currentCityLat, currentCityLon],
+        zoom: 10,
+        controls: []  // Убираем все стандартные элементы управления, включая панель поиска
+      });
+    }
+
+    // Функция для обновления карты с учетом загрязнения
+    function updateMap(lat, lon, pm25, pm10, co, no, no2, o3, so2) {
+      console.log('Обновление карты с показателями загрязнения:', { pm25, pm10, co, no, no2, o3, so2 });
+
+      // Если маркер существует, удаляем его
+      if (marker) {
+        marker.geometry.setCoordinates([lat, lon]);  // Обновляем координаты маркера
+      } else {
+        // Если маркер ещё не существует, создаём новый
+        marker = new ymaps.Placemark([lat, lon], {
+          balloonContent: `PM2.5: ${pm25} <br>PM10: ${pm10} <br>CO: ${co} <br>NO: ${no} <br>NO2: ${no2} <br>O3: ${o3} <br>SO2: ${so2}`
+        }, {
+          preset: `islands#circleIcon`,
+          iconColor: getColorByPollution(pm25, pm10, co, no, no2, o3, so2)
+        });
+        map.geoObjects.add(marker); // Добавляем маркер на карту
+      }
+
+      // Рассчитываем радиус круга на основе загрязнения
+      let radius = calculatePollutionRadius(pm25, pm10, co, no, no2, o3, so2);
+
+      // Если круг существует, удаляем его
+      if (circle) {
+        circle.geometry.setCoordinates([lat, lon]);  // Обновляем координаты круга
+        circle.options.set('radius', radius);  // Обновляем радиус
+        circle.options.set('fillColor', getColorByPollution(pm25, pm10, co, no, no2, o3, so2));  // Обновляем цвет круга
+      } else {
+        // Если круга нет, создаём новый
+        circle = new ymaps.Circle([ 
+          [lat, lon],  // Центр круга
+          radius  // Радиус круга
+        ], {
+          balloonContent: "Область загрязнения"
+        }, {
+          fillColor: getColorByPollution(pm25, pm10, co, no, no2, o3, so2),
+          fillOpacity: 0.2,
+          strokeColor: getColorByPollution(pm25, pm10, co, no, no2, o3, so2),
+          strokeWidth: 2
+        });
+        map.geoObjects.add(circle); // Добавляем круг на карту
+      }
+
+      // Центрируем карту на маркере
+      map.setCenter([lat, lon], 10);
+    }
+
+    // Функция для расчёта радиуса круга в зависимости от уровня загрязнения
+    function calculatePollutionRadius(pm25, pm10, co, no, no2, o3, so2) {
+      // Рассчитываем общее загрязнение, здесь можно использовать более сложную формулу
+      const pollutionIndex = (pm25 + pm10 + co + no + no2 + o3 + so2) / 7;
+
+      // Простая формула для расчёта радиуса: чем выше загрязнение, тем больше радиус
+      if (pollutionIndex <= 10) return 1000;  // Радиус 1 км для хорошего качества
+      if (pollutionIndex <= 20) return 2000;  // Радиус 2 км для умеренного загрязнения
+      if (pollutionIndex <= 40) return 3000;  // Радиус 3 км для высокого загрязнения
+      return 5000;  // Радиус 5 км для очень высокого загрязнения
+    }
+
+    // Функция для определения цвета маркера и круга в зависимости от загрязнения
+    function getColorByPollution(pm25, pm10, co, no, no2, o3, so2) {
+      // Вычисление общего индекса загрязнения (например, через среднее значение)
+      const pollutionIndex = (pm25 + pm10 + co + no + no2 + o3 + so2) / 7;
+      
+      if (pollutionIndex <= 10) return '#00FF00';  // Очень хорошее качество (Зелёный)
+      if (pollutionIndex <= 20) return '#FFFF00';  // Хорошее качество (Жёлтый)
+      if (pollutionIndex <= 40) return '#FFA500';  // Умеренное загрязнение (Оранжевый)
+      if (pollutionIndex <= 60) return '#FF0000';  // Высокое загрязнение (Красный)
+      return '#8B0000';  // Очень высокое загрязнение (Тёмно-красный)
+    }
+
+    // Функция для вывода вердикта и рекомендаций
+    function updateVerdict(pm25, pm10, co, no, no2, o3, so2) {
+      const pollutionIndex = (pm25 + pm10 + co + no + no2 + o3 + so2) / 7;
+      let verdict = '';
+      let recommendations = '';
+
+      if (pollutionIndex <= 10) {
+        verdict = 'Качество воздуха очень хорошее.';
+        recommendations = 'Вы можете заниматься спортом на улице, гулять и наслаждаться свежим воздухом.';
+      } else if (pollutionIndex <= 20) {
+        verdict = 'Качество воздуха хорошее.';
+        recommendations = 'Вы можете проводить время на улице, но если есть проблемы с дыханием, лучше ограничить нагрузку.';
+      } else if (pollutionIndex <= 40) {
+        verdict = 'Умеренное загрязнение воздуха.';
+        recommendations = 'Рекомендуется ограничить физическую активность на улице, особенно для людей с заболеваниями дыхательных путей.';
+      } else if (pollutionIndex <= 60) {
+        verdict = 'Высокое загрязнение воздуха.';
+        recommendations = 'Не рекомендуется проводить много времени на улице, особенно для детей и пожилых людей.';
+      } else {
+        verdict = 'Очень высокое загрязнение воздуха.';
+        recommendations = 'Рекомендуется избегать нахождения на улице, особенно при наличии респираторных заболеваний.';
+      }
+
+      document.getElementById('verdict').textContent = verdict;
+      document.getElementById('recommendations').textContent = recommendations;
+    }
+
+    // Функция для расчёта AQI
+    function updateAQI(pm25, pm10, co, no, no2, o3, so2) {
+      // Простой расчёт AQI как среднее значение загрязняющих веществ (можно сделать более сложным)
+      const pollutionIndex = (pm25 + pm10 + co + no + no2 + o3 + so2) / 7;
+
+      let aqi = pollutionIndex;
+      document.getElementById('aqi').textContent = `Индекс качества воздуха (AQI): ${Math.round(aqi)}`;
+    }
+  </script>
+<!-- Добавляем кнопки для перехода на другие страницы -->
+<div>
+  <!-- Добавляем кнопки для перехода на другие страницы с городом в URL -->
+<div>
+  <button onclick="window.location.href='forecast.html?city=' + encodeURIComponent(document.getElementById('city').value)">Перейти к прогнозу качества воздуха</button>
+  <button onclick="window.location.href='historical-data.html?city=' + encodeURIComponent(document.getElementById('city').value)">Перейти к историческим данным</button>
+  <button onclick="window.location.href='cities-analysis.html?city=' + encodeURIComponent(document.getElementById('city').value)">Перейти к анализу по городам</button>
+</div>
+
+</body>
+</html>
+
